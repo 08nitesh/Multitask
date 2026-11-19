@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multipost</title>
+<style>
+:root{--bg:#f3f1ee;--panel:#fff;--ink:#1d1b20;--muted:#6b6670;--line:#ddd8d2;--accent:#2f3fd6;--accent-ink:#fff;--ok:#14794a;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#16151a;--panel:#1f1e25;--ink:#eeecf2;--muted:#9b96a4;--line:#34323d;--accent:#8c97ff;--accent-ink:#10112b;--ok:#5fd39a;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:920px;margin:0 auto;padding:32px 20px 80px;display:grid;gap:20px}
+h1{font-size:1.9rem;margin:0 0 4px;letter-spacing:-.02em}
+p.sub{margin:0;color:var(--muted)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px}
+h2{font-size:1.05rem;margin:0 0 14px}
+label{display:block;font-weight:600;font-size:.9rem;margin:0 0 6px}
+input[type=text],input[type=password],input[type=number],textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:inherit;font:inherit}
+textarea{min-height:96px;resize:vertical}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:16px}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:28px;text-align:center;cursor:pointer;color:var(--muted)}
+.drop.has{border-style:solid;color:var(--ink)}
+video{max-width:100%;max-height:260px;margin-top:12px;border-radius:6px}
+.acc{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px}
+.acc textarea{margin-top:10px;min-height:60px;display:none}
+.acc.on textarea{display:block}
+.check{display:flex;gap:8px;align-items:center;font-weight:600;margin:0}
+.check.plain{font-weight:400}
+button.go{background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;padding:14px 22px;font:inherit;font-weight:700;cursor:pointer;width:100%}
+button.go:disabled{opacity:.5;cursor:wait}
+.res{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.res:last-child{border:0}
+.published{color:var(--ok)}.failed{color:var(--bad)}.working{color:var(--accent)}
+.err{color:var(--bad);margin-top:10px}
+small{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Multipost</h1>
+    <p class="sub">Upload one video, pick your accounts, and publish it as a Reel to each of them.</p>
+  </div>
+
+  <section id="login">
+    <h2>Password</h2>
+    <label for="pw">Enter your dashboard password</label>
+    <input type="password" id="pw" autocomplete="current-password">
+    <div class="err" id="loginErr" role="alert"></div>
+    <button class="go" id="loginBtn" style="margin-top:14px">Open dashboard</button>
+  </section>
+
+  <div id="app" hidden style="display:none;gap:20px">
+    <section>
+      <h2>Video</h2>
+      <div class="drop" id="drop" tabindex="0">Tap to choose an MP4 or MOV video</div>
+      <input type="file" id="file" accept="video/mp4,video/quicktime" hidden>
+      <video id="preview" controls hidden></video>
+    </section>
+
+    <section>
+      <h2>Caption</h2>
+      <label for="caption">Caption (used for every account unless you change it below)</label>
+      <textarea id="caption" maxlength="2200"></textarea>
+      <div class="row" style="grid-template-columns:1fr">
+        <div><label for="hashtags">Hashtags</label><input type="text" id="hashtags" placeholder="#reels #travel #fyp"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Accounts</h2>
+      <div id="accounts"><small>Loading accounts…</small></div>
+      <small>Each account can have its own caption. Different captions look more natural to Instagram.</small>
+    </section>
+
+    <section>
+      <h2>Options</h2>
+      <label class="check plain"><input type="checkbox" id="shareToFeed" checked> Also show the Reel on the profile feed</label>
+      <div class="row">
+        <div><label for="thumbOffset">Cover frame at (seconds)</label><input type="number" id="thumbOffset" min="0" step="0.5" value="0"></div>
+        <div><label for="locationId">Location ID</label><input type="text" id="locationId" placeholder="Facebook Place ID (optional)"></div>
+        <div><label for="collaborators">Collaborators</label><input type="text" id="collaborators" placeholder="username1, username2"></div>
+        <div><label for="delay">Minutes between accounts</label><input type="number" id="delay" min="0" value="5"></div>
+      </div>
+      <p><small>Keep this page open while posting. With a gap between accounts, the later accounts post while the page stays open.</small></p>
+    </section>
+
+    <button class="go" id="go">Publish to selected accounts</button>
+    <div class="err" id="err" role="alert"></div>
+
+    <section id="statusBox" hidden>
+      <h2>Progress</h2>
+      <div id="status"></div>
+    </section>
+  </div>
+</main>
+
+<script type="module">
+import { upload } from 'https://esm.sh/@vercel/blob@0.27.0/client';
+
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let pw = '';
+let accounts = [];
+
+async function api(body) {
+  const r = await fetch('/api/ig', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-password': pw },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Request failed');
+  return j;
+}
+
+async function login() {
+  $('loginErr').textContent = '';
+  pw = $('pw').value;
+  try {
+    accounts = await api({ action: 'accounts' });
+    if (!accounts.length) throw new Error('No accounts found. Check the ACCOUNTS_JSON setting in Vercel.');
+  } catch (e) {
+    $('loginErr').textContent = e.message;
+    return;
+  }
+  $('login').hidden = true;
+  $('app').hidden = false;
+  $('app').style.display = 'grid';
+  $('accounts').innerHTML = '';
+  accounts.forEach((a) => {
+    const el = document.createElement('div');
+    el.className = 'acc on';
+    el.innerHTML = `<label class="check"><input type="checkbox" data-id="${a.id}" checked> <span></span></label>
+      <textarea data-ov="${a.id}"></textarea>`;
+    el.querySelector('span').textContent = a.name;
+    el.querySelector('textarea').placeholder = `Custom caption for ${a.name} (optional)`;
+    el.querySelector('input').addEventListener('change', (e) => el.classList.toggle('on', e.target.checked));
+    $('accounts').appendChild(el);
+  });
+}
+$('loginBtn').onclick = login;
+$('pw').onkeydown = (e) => { if (e.key === 'Enter') login(); };
+
+$('drop').onclick = () => $('file').click();
+$('drop').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') $('file').click(); };
+$('file').onchange = () => {
+  const f = $('file').files[0];
+  if (!f) return;
+  $('drop').textContent = `${f.name} (${(f.size / 1048576).toFixed(1)} MB)`;
+  $('drop').classList.add('has');
+  $('preview').src = URL.createObjectURL(f);
+  $('preview').hidden = false;
+};
+
+const state = {};
+function render() {
+  $('status').innerHTML = Object.values(state).map((s) =>
+    `<div class="res"><span>${s.name}</span><span class="${s.cls}">${s.html}</span></div>`).join('');
+}
+function set(a, cls, html) { state[a.id] = { name: a.name, cls, html }; render(); }
+
+async function runAccount(a, i, ctx) {
+  try {
+    if (i * ctx.delay > 0) {
+      const at = new Date(Date.now() + i * ctx.delay * 60000);
+      set(a, 'working', 'Waiting, posts at ' + at.toLocaleTimeString());
+      await sleep(i * ctx.delay * 60000);
+    }
+    set(a, 'working', 'Sending to Instagram…');
+    const caption = [ctx.overrides[a.id]?.trim() || ctx.caption, ctx.hashtags].filter(Boolean).join('\n\n');
+    const { containerId } = await api({
+      action: 'create', accountId: a.id, videoUrl: ctx.videoUrl, caption,
+      shareToFeed: ctx.shareToFeed, thumbOffset: ctx.thumbOffset,
+      locationId: ctx.locationId, collaborators: ctx.collaborators,
+    });
+    set(a, 'working', 'Instagram is processing the video…');
+    for (let n = 0; n < 120; n++) {
+      await sleep(5000);
+      const s = await api({ action: 'status', accountId: a.id, containerId });
+      if (s.status === 'FINISHED') break;
+      if (s.status === 'ERROR' || s.status === 'EXPIRED') throw new Error('Processing failed: ' + (s.detail || s.status));
+      if (n === 119) throw new Error('Timed out waiting for Instagram');
+    }
+    const p = await api({ action: 'publish', accountId: a.id, containerId });
+    set(a, 'published', p.permalink ? `<a href="${p.permalink}" target="_blank" rel="noopener">View post</a>` : 'Published');
+  } catch (e) {
+    set(a, 'failed', e.message.replace(/</g, '&lt;'));
+  }
+}
+
+$('go').onclick = async () => {
+  $('err').textContent = '';
+  const f = $('file').files[0];
+  const selected = [...document.querySelectorAll('[data-id]')].filter((c) => c.checked).map((c) => c.dataset.id);
+  if (!f) return ($('err').textContent = 'Choose a video first.');
+  if (!selected.length) return ($('err').textContent = 'Select at least one account.');
+
+  const overrides = {};
+  document.querySelectorAll('[data-ov]').forEach((t) => { if (t.value.trim()) overrides[t.dataset.ov] = t.value; });
+
+  $('go').disabled = true;
+  try { await navigator.wakeLock?.request('screen'); } catch {}
+
+  let videoUrl;
+  try {
+    const ext = f.name.toLowerCase().endsWith('.mov') ? '.mov' : '.mp4';
+    const blob = await upload('video' + ext, f, {
+      access: 'public',
+      handleUploadUrl: '/api/upload',
+      clientPayload: pw,
+      multipart: true,
+      onUploadProgress: ({ percentage }) => { $('go').textContent = `Uploading video… ${Math.round(percentage)}%`; },
+    });
+    videoUrl = blob.url;
+  } catch (e) {
+    $('err').textContent = 'Upload failed: ' + e.message;
+    $('go').disabled = false;
+    $('go').textContent = 'Publish to selected accounts';
+    return;
+  }
+
+  const ctx = {
+    videoUrl, overrides,
+    caption: $('caption').value.trim(),
+    hashtags: $('hashtags').value.trim(),
+    shareToFeed: $('shareToFeed').checked,
+    thumbOffset: $('thumbOffset').value,
+    locationId: $('locationId').value.trim(),
+    collaborators: $('collaborators').value.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean),
+    delay: Math.max(0, Number($('delay').value || 0)),
+  };
+  $('statusBox').hidden = false;
+  $('go').textContent = 'Publishing…';
+  const chosen = accounts.filter((a) => selected.includes(a.id));
+  await Promise.all(chosen.map((a, i) => runAccount(a, i, ctx)));
+  $('go').disabled = false;
+  $('go').textContent = 'Publish to selected accounts';
+};
+</script>
+</body>
+</html>
