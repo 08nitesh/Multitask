@@ -1,4 +1,4 @@
-const API = `https://graph.facebook.com/${process.env.GRAPH_VERSION || 'v21.0'}`;
+const API = `https://graph.instagram.com/${process.env.GRAPH_VERSION || 'v21.0'}`;
 
 function getAccounts() {
   try {
